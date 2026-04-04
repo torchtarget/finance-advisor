@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 
 from rich.console import Console
 from rich.table import Table
@@ -13,7 +12,6 @@ from rich.text import Text
 
 from src.config import load_config
 from src.data.market_data import MarketDataProvider
-from src.execution.executor import TradeExecutor
 from src.execution.paper_trader import PaperTrader
 from src.risk.position_sizer import PositionSizer
 from src.strategy.scanner import WeeklyScanner
@@ -36,7 +34,7 @@ def print_banner():
     banner = Text()
     banner.append("WEEKLY SPECULATIVE TRADING ADVISOR\n", style="bold red")
     banner.append("HIGH RISK — You can lose everything.\n", style="bold yellow")
-    banner.append("This is NOT financial advice. Use at your own risk.", style="dim")
+    banner.append("Advisor for instruments available on DeGiro.", style="dim")
     console.print(Panel(banner, border_style="red"))
 
 
@@ -55,13 +53,11 @@ def cmd_scan(args):
         console.print("[yellow]No signals found meeting criteria.[/yellow]")
         return
 
-    # Position sizing
-    capital = args.capital or 10_000.0
+    capital = args.capital
     sizer = PositionSizer(config)
     recommendations = sizer.size_positions(signals, capital)
 
-    # Display results
-    table = Table(title=f"Top Picks — Week of Today (${capital:,.0f} capital)")
+    table = Table(title=f"Top Picks — This Week (${capital:,.0f} capital)")
     table.add_column("#", style="bold")
     table.add_column("Symbol", style="cyan bold")
     table.add_column("Strategy", style="magenta")
@@ -86,8 +82,8 @@ def cmd_scan(args):
             sig.strategy.value,
             f"[{confidence_style}]{sig.confidence:.0%}[/{confidence_style}]",
             f"${sig.entry_price:.2f}",
-            f"${sig.target_price:.2f}" if sig.target_price else "—",
-            f"[{ret_style}]{sig.expected_return_pct:+.1f}%[/{ret_style}]" if sig.expected_return_pct else "—",
+            f"${sig.target_price:.2f}" if sig.target_price else "---",
+            f"[{ret_style}]{sig.expected_return_pct:+.1f}%[/{ret_style}]" if sig.expected_return_pct else "---",
             f"{rec.allocation_pct:.0f}%",
             str(rec.suggested_quantity),
             f"${cost:,.0f}",
@@ -95,7 +91,6 @@ def cmd_scan(args):
 
     console.print(table)
 
-    # Print rationales
     console.print("\n[bold]Signal Details:[/bold]\n")
     for rec in recommendations:
         sig = rec.signal
@@ -111,48 +106,45 @@ def cmd_paper(args):
     market_data = MarketDataProvider()
     scanner = WeeklyScanner(config, market_data)
 
-    capital = args.capital or 10_000.0
+    capital = args.capital
     paper = PaperTrader(starting_capital=capital)
-    executor = TradeExecutor(config, paper_trader=paper)
     sizer = PositionSizer(config)
 
-    console.print(f"\n[bold]Paper Trading Mode — ${capital:,.0f} capital[/bold]\n")
+    console.print(f"\n[bold]Paper Trading Mode --- ${capital:,.0f} capital[/bold]\n")
 
-    # Scan and generate signals
     signals = scanner.generate_signals()
     if not signals:
-        console.print("[yellow]No signals — skipping this week.[/yellow]")
+        console.print("[yellow]No signals --- skipping this week.[/yellow]")
         return
 
     recommendations = sizer.size_positions(signals, capital)
 
-    # Show what we're about to do
-    console.print("[bold]Executing paper trades:[/bold]\n")
-    orders = executor.execute_all(recommendations)
-
-    for order in orders:
+    console.print("[bold]Paper trades:[/bold]\n")
+    for rec in recommendations:
+        order = paper.execute_recommendation(rec)
         status_style = "green" if order.status.value == "filled" else "red"
-        console.print(
-            f"  [{status_style}]{order.status.value.upper()}[/{status_style}] "
-            f"{order.direction.value} {order.quantity}x {order.asset.symbol} "
-            f"@ ${order.filled_price:.2f}" if order.filled_price else ""
-        )
+        if order.filled_price:
+            console.print(
+                f"  [{status_style}]{order.status.value.upper()}[/{status_style}] "
+                f"{order.direction.value} {order.quantity}x {order.asset.symbol} "
+                f"@ ${order.filled_price:.2f}"
+            )
 
-    # Summary
     total_value = paper.get_total_value()
     console.print(f"\n  Cash remaining: ${paper.cash:,.2f}")
     console.print(f"  Positions value: ${total_value - paper.cash:,.2f}")
     console.print(f"  Total value: ${total_value:,.2f}\n")
 
     paper.save_state()
-    console.print("[dim]State saved. Run 'close' command at end of week to see results.[/dim]")
+    console.print("[dim]State saved to data/paper_trades.json[/dim]")
 
 
-def cmd_status(args):
-    """Show current paper trading positions."""
-    paper = PaperTrader()
-    # TODO: Load state from disk
-    console.print("[yellow]Status command — load saved state (not yet implemented)[/yellow]")
+def cmd_serve(args):
+    """Start the web UI (FastAPI + React)."""
+    import uvicorn
+
+    console.print(f"\n[bold]Starting web UI on http://localhost:{args.port}[/bold]\n")
+    uvicorn.run("src.api.server:app", host="0.0.0.0", port=args.port, reload=args.reload)
 
 
 def main():
@@ -163,19 +155,21 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     subparsers = parser.add_subparsers(dest="command")
 
-    # scan command
+    # scan
     scan_parser = subparsers.add_parser("scan", help="Scan market and show top picks")
     scan_parser.add_argument("--capital", type=float, default=1_000, help="Available capital")
     scan_parser.set_defaults(func=cmd_scan)
 
-    # paper command
+    # paper
     paper_parser = subparsers.add_parser("paper", help="Run paper trading")
     paper_parser.add_argument("--capital", type=float, default=1_000, help="Starting capital")
     paper_parser.set_defaults(func=cmd_paper)
 
-    # status command
-    status_parser = subparsers.add_parser("status", help="Show current positions")
-    status_parser.set_defaults(func=cmd_status)
+    # serve (web UI)
+    serve_parser = subparsers.add_parser("serve", help="Start web UI")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port")
+    serve_parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
+    serve_parser.set_defaults(func=cmd_serve)
 
     args = parser.parse_args()
 

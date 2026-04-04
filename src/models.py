@@ -43,7 +43,7 @@ class StrategyType(str, Enum):
 
 
 class Asset(BaseModel):
-    """A tradeable instrument on DeGiro."""
+    """A tradeable instrument available on DeGiro's platform."""
 
     product_id: str
     symbol: str
@@ -157,7 +157,7 @@ class Position(BaseModel):
 
 
 class Order(BaseModel):
-    """An order to be placed or already placed on DeGiro."""
+    """An order for paper trading tracking."""
 
     asset: Asset
     direction: SignalDirection
@@ -166,7 +166,7 @@ class Order(BaseModel):
     limit_price: float | None = None
     stop_price: float | None = None
     status: OrderStatus = OrderStatus.PENDING
-    degiro_order_id: str | None = None
+    order_id: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     filled_at: datetime | None = None
     filled_price: float | None = None

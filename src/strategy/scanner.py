@@ -83,7 +83,7 @@ class WeeklyScanner:
                     gap_pct = (latest.open - prices[-2].close) / prices[-2].close
 
                 asset = Asset(
-                    product_id="",  # Will be resolved via DeGiro search
+                    product_id="",
                     symbol=symbol,
                     name=symbol,
                     exchange_id=0,

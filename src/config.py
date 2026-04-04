@@ -15,13 +15,6 @@ from pydantic import BaseModel, Field
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.toml"
 
 
-class DegiroConfig(BaseModel):
-    username: str = ""
-    password: str = ""
-    totp_secret: str = ""
-    account_type: str = "ACTIVE"
-
-
 class StrategyConfig(BaseModel):
     lookback_days: int = 30
     holding_period_days: int = 7
@@ -49,7 +42,8 @@ class RiskConfig(BaseModel):
 
 
 class MarketDataConfig(BaseModel):
-    alpha_vantage_key: str = ""
+    finnhub_api_key: str = ""
+    newsapi_key: str = ""
     exchanges: list[int] = Field(default_factory=lambda: [906, 908])
     asset_types: list[str] = Field(default_factory=lambda: ["stock"])
     min_avg_volume: int = 500_000
@@ -68,13 +62,6 @@ class ScannerConfig(BaseModel):
     earnings_window_days: int = 7
 
 
-class ExecutionConfig(BaseModel):
-    mode: str = "paper"
-    default_order_type: str = "market"
-    limit_price_buffer: float = 0.005
-    auto_execute: bool = False
-
-
 class ScheduleConfig(BaseModel):
     scan_day: str = "monday"
     scan_time: str = "09:35"
@@ -91,12 +78,10 @@ class AlertsConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    degiro: DegiroConfig = Field(default_factory=DegiroConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     scanner: ScannerConfig = Field(default_factory=ScannerConfig)
-    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
 
@@ -110,12 +95,10 @@ def load_config(path: Path | None = None) -> AppConfig:
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
 
-    # Environment variable overrides for sensitive fields
+    # Environment variable overrides for API keys
     env_overrides = {
-        ("degiro", "username"): "DEGIRO_USERNAME",
-        ("degiro", "password"): "DEGIRO_PASSWORD",
-        ("degiro", "totp_secret"): "DEGIRO_TOTP_SECRET",
-        ("market_data", "alpha_vantage_key"): "ALPHA_VANTAGE_KEY",
+        ("market_data", "finnhub_api_key"): "FINNHUB_API_KEY",
+        ("market_data", "newsapi_key"): "NEWSAPI_KEY",
         ("alerts", "telegram_bot_token"): "TELEGRAM_BOT_TOKEN",
         ("alerts", "telegram_chat_id"): "TELEGRAM_CHAT_ID",
     }

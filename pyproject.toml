@@ -1,10 +1,9 @@
 [project]
 name = "finance-advisor"
 version = "0.1.0"
-description = "Short-term financial advisor tool with DeGiro integration"
+description = "High-risk weekly speculative trading advisor for DeGiro instruments"
 requires-python = ">=3.11"
 dependencies = [
-    "degiro-connector>=2.0.0",
     "yfinance>=0.2.0",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
@@ -14,6 +13,10 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "rich>=13.0.0",
     "httpx>=0.24.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "finnhub-python>=2.4.0",
+    "newsapi-python>=0.2.7",
 ]
 
 [project.optional-dependencies]
