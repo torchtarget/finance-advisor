@@ -152,7 +152,7 @@ def cmd_backtest(args):
     """Run a historical backtest and display results."""
     config = load_config()
 
-    console.print(f"\n[bold]Running backtest: {args.weeks} weeks, ${args.capital:,.0f} capital[/bold]\n")
+    console.print(f"\n[bold]Running backtest: {args.weeks} weeks, ${args.capital:,.0f} capital (buy Mon open → sell next Mon open)[/bold]\n")
 
     engine = BacktestEngine(config=config, capital=args.capital)
     result = engine.run(num_weeks=args.weeks)

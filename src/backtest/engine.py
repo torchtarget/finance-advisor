@@ -1,6 +1,6 @@
 """Backtesting engine — replays past weeks to evaluate scanner performance.
 
-Strategy: buy Monday open, sell Friday close, 1-week holding period.
+Strategy: buy Monday open, sell NEXT Monday open, 1-week holding period.
 No look-ahead bias: indicators are computed only on data available before each Monday.
 """
 
@@ -44,8 +44,8 @@ class TradeSummary:
 class WeekResult:
     """Aggregate result for one simulated week."""
 
-    week_start: str  # Monday date ISO
-    week_end: str  # Friday date ISO
+    week_start: str  # Entry Monday ISO date
+    week_end: str  # Exit Monday ISO date
     trades: list[TradeSummary] = field(default_factory=list)
     weekly_pnl: float = 0.0
     weekly_return_pct: float = 0.0
@@ -123,7 +123,7 @@ class BacktestResult:
 class _HistoricalMarketDataProvider(MarketDataProvider):
     """MarketDataProvider that returns data only up to a cutoff date.
 
-    This prevents look-ahead bias: when simulating a Monday scan,
+    Prevents look-ahead bias: when simulating a Monday scan,
     only price data available before that Monday is used.
     """
 
@@ -141,29 +141,22 @@ class _HistoricalMarketDataProvider(MarketDataProvider):
         """Return price history up to (but not including) the cutoff date."""
         if symbol not in self._cache:
             return []
-
         all_prices = self._cache[symbol]
-        # Only return data strictly before the cutoff
         return [p for p in all_prices if p.timestamp < self.cutoff]
 
     def get_current_price(self, symbol: str) -> float | None:
-        """Return the last available close price before cutoff."""
         prices = self.get_price_history(symbol)
-        if prices:
-            return prices[-1].close
-        return None
+        return prices[-1].close if prices else None
 
     def get_upcoming_earnings(self, symbol: str) -> int | None:
-        # In backtest mode, skip earnings lookups to avoid API calls
-        return None
+        return None  # Skip API calls in backtest
 
     def get_short_interest(self, symbol: str) -> float | None:
-        # In backtest mode, skip short interest lookups
-        return None
+        return None  # Skip API calls in backtest
 
 
 class BacktestEngine:
-    """Replays past weeks to evaluate the scanner's historical performance."""
+    """Replays past weeks: buy Monday open, sell next Monday open."""
 
     def __init__(
         self,
@@ -175,46 +168,47 @@ class BacktestEngine:
         self.capital = capital
         self.symbols = symbols or DEFAULT_UNIVERSE
 
-    def run(self, num_weeks: int = 12) -> BacktestResult:
+    def run(self, num_weeks: int = 52) -> BacktestResult:
         """Run the backtest over the last `num_weeks` weeks.
 
-        For each historical week:
-        1. Fetch data available up to Monday morning
-        2. Run the scanner to generate signals
-        3. Size positions
-        4. Look up actual Monday open and Friday close prices
-        5. Compute P&L
+        For each week:
+        1. On entry Monday: run scanner using only pre-Monday data
+        2. Buy at Monday's open price
+        3. Sell at NEXT Monday's open price (7 calendar days later)
+        4. Compound capital week to week
         """
         logger.info(f"Starting backtest: {num_weeks} weeks, ${self.capital:,.0f} capital")
 
-        # Pre-fetch all historical data in one batch to be efficient.
-        # We need enough history: num_weeks of weeks + 60 days lookback for indicators.
-        total_days = num_weeks * 7 + 90
+        # Need enough data: num_weeks + lookback for indicators + buffer
+        total_days = num_weeks * 7 + 120
         price_cache = self._prefetch_data(total_days)
 
-        # Build the list of (monday, friday) date pairs going backwards
-        week_pairs = self._get_week_pairs(num_weeks, price_cache)
+        # Build list of (entry_monday, exit_monday) pairs
+        monday_pairs = self._get_monday_pairs(num_weeks, price_cache)
 
-        if not week_pairs:
-            logger.warning("No valid trading weeks found in the date range")
+        if not monday_pairs:
+            logger.warning("No valid trading weeks found")
             return BacktestResult(starting_capital=self.capital, ending_capital=self.capital)
+
+        logger.info(f"Found {len(monday_pairs)} trading weeks to simulate")
 
         running_capital = self.capital
         results: list[WeekResult] = []
-        peak_capital = running_capital
 
-        for monday, friday in week_pairs:
-            week_result = self._simulate_week(monday, friday, running_capital, price_cache)
+        for entry_monday, exit_monday in monday_pairs:
+            week_result = self._simulate_week(entry_monday, exit_monday, running_capital, price_cache)
             running_capital = week_result.capital_end
             results.append(week_result)
 
-            if running_capital > peak_capital:
-                peak_capital = running_capital
+            # Safety: stop if capital goes to zero
+            if running_capital <= 0:
+                logger.warning(f"Capital depleted at week {entry_monday.date()}")
+                break
 
-        return self._compile_results(results, peak_capital)
+        return self._compile_results(results)
 
     def _prefetch_data(self, total_days: int) -> dict[str, list[PriceData]]:
-        """Download all price data up front to avoid repeated API calls."""
+        """Download all price data up front."""
         logger.info(f"Prefetching {len(self.symbols)} symbols ({total_days} days)...")
         cache: dict[str, list[PriceData]] = {}
         market_data = MarketDataProvider()
@@ -230,86 +224,61 @@ class BacktestEngine:
         logger.info(f"Prefetched data for {len(cache)} symbols")
         return cache
 
-    def _get_week_pairs(
+    def _get_monday_pairs(
         self, num_weeks: int, price_cache: dict[str, list[PriceData]]
     ) -> list[tuple[datetime, datetime]]:
-        """Find actual (Monday, Friday) trading day pairs from the data.
+        """Find consecutive Monday pairs from actual trading data.
 
-        If Monday is missing (holiday), use Tuesday.
-        If Friday is missing (holiday), use Thursday.
+        Each pair is (entry_monday, exit_monday) = buy and sell dates.
+        If Monday is a holiday, use Tuesday.
         """
-        # Gather all unique trading dates across all symbols
+        # Gather all unique trading dates
         all_dates: set[datetime] = set()
         for prices in price_cache.values():
             for p in prices:
-                # Normalize to date only (midnight)
                 all_dates.add(p.timestamp.replace(hour=0, minute=0, second=0, microsecond=0))
 
         if not all_dates:
             return []
 
         sorted_dates = sorted(all_dates)
-        latest_date = sorted_dates[-1]
 
-        pairs: list[tuple[datetime, datetime]] = []
+        # Find all Mondays (or Tuesday substitutes) in the data
+        mondays: list[datetime] = []
+        seen_weeks: set[tuple[int, int]] = set()  # (year, week_number)
 
-        # Walk backwards from the most recent completed week
-        # Start from the Friday before or on latest_date
-        current = latest_date
-        # Find the most recent Friday
-        while current.weekday() != 4:  # 4 = Friday
-            current -= timedelta(days=1)
+        for d in sorted_dates:
+            year_week = d.isocalendar()[:2]
+            if year_week in seen_weeks:
+                continue
+            # Accept Monday (0) or Tuesday (1) as week start
+            if d.weekday() <= 1:
+                seen_weeks.add(year_week)
+                mondays.append(d)
 
-        for _ in range(num_weeks):
-            friday_target = current
-            monday_target = friday_target - timedelta(days=4)
+        if len(mondays) < 2:
+            return []
 
-            # Find actual entry day: Monday, or Tuesday if Monday missing
-            entry_day = self._find_nearest_trading_day(
-                monday_target, sorted_dates, direction="forward", max_offset=1
-            )
-            # Find actual exit day: Friday, or Thursday if Friday missing
-            exit_day = self._find_nearest_trading_day(
-                friday_target, sorted_dates, direction="backward", max_offset=1
-            )
+        # Take the last num_weeks+1 mondays to form num_weeks pairs
+        relevant = mondays[-(num_weeks + 1):]
 
-            if entry_day and exit_day and entry_day < exit_day:
-                pairs.append((entry_day, exit_day))
+        pairs = []
+        for i in range(len(relevant) - 1):
+            pairs.append((relevant[i], relevant[i + 1]))
 
-            # Move to previous week's Friday
-            current -= timedelta(days=7)
-
-        pairs.reverse()  # Chronological order
         return pairs
-
-    def _find_nearest_trading_day(
-        self,
-        target: datetime,
-        sorted_dates: list[datetime],
-        direction: str = "forward",
-        max_offset: int = 1,
-    ) -> datetime | None:
-        """Find the closest trading day to `target` within max_offset days."""
-        for offset in range(max_offset + 1):
-            delta = timedelta(days=offset)
-            candidate = target + delta if direction == "forward" else target - delta
-            # Check if this date is in our trading dates
-            for d in sorted_dates:
-                if d.date() == candidate.date():
-                    return d
-        return None
 
     def _simulate_week(
         self,
-        monday: datetime,
-        friday: datetime,
+        entry_monday: datetime,
+        exit_monday: datetime,
         capital: float,
         price_cache: dict[str, list[PriceData]],
     ) -> WeekResult:
-        """Simulate one week: scan on Monday, buy at open, sell Friday close."""
+        """Simulate one week: scan on entry Monday, buy at open, sell next Monday open."""
         week = WeekResult(
-            week_start=monday.strftime("%Y-%m-%d"),
-            week_end=friday.strftime("%Y-%m-%d"),
+            week_start=entry_monday.strftime("%Y-%m-%d"),
+            week_end=exit_monday.strftime("%Y-%m-%d"),
             capital_start=capital,
             capital_end=capital,
         )
@@ -317,29 +286,27 @@ class BacktestEngine:
         if capital <= 0:
             return week
 
-        # Create a historical market data provider that only sees data before Monday
-        hist_md = _HistoricalMarketDataProvider(cutoff=monday, cache=price_cache)
+        # Scanner sees only data before entry Monday
+        hist_md = _HistoricalMarketDataProvider(cutoff=entry_monday, cache=price_cache)
 
-        # Run the scanner as if it were Monday morning
         scanner = WeeklyScanner(self.config, hist_md)
         try:
             candidates = scanner.scan(self.symbols)
             signals = scanner.generate_signals(candidates)
         except Exception as e:
-            logger.debug(f"Scanner failed for week {monday.date()}: {e}")
+            logger.debug(f"Scanner failed for week {entry_monday.date()}: {e}")
             return week
 
         if not signals:
             return week
 
-        # Size positions
         sizer = PositionSizer(self.config)
         recommendations = sizer.size_positions(signals, capital)
 
         if not recommendations:
             return week
 
-        # Simulate trades using actual Monday open / Friday close prices
+        # Execute trades: buy at entry Monday open, sell at exit Monday open
         total_pnl = 0.0
         for rec in recommendations:
             symbol = rec.signal.asset.symbol
@@ -347,13 +314,13 @@ class BacktestEngine:
                 continue
 
             prices = price_cache[symbol]
-            entry_price = self._get_price_on_date(prices, monday, field="open")
-            exit_price = self._get_price_on_date(prices, friday, field="close")
+            entry_price = self._get_price_on_date(prices, entry_monday, field="open")
+            exit_price = self._get_price_on_date(prices, exit_monday, field="open")
 
             if entry_price is None or exit_price is None or entry_price <= 0:
                 continue
 
-            # Recompute quantity based on actual entry price
+            # Recompute quantity at actual entry price
             alloc_capital = capital * (rec.allocation_pct / 100.0)
             quantity = int(alloc_capital / entry_price)
             if quantity <= 0:
@@ -366,8 +333,8 @@ class BacktestEngine:
                 symbol=symbol,
                 strategy=rec.signal.strategy.value,
                 confidence=rec.signal.confidence,
-                entry_date=monday.strftime("%Y-%m-%d"),
-                exit_date=friday.strftime("%Y-%m-%d"),
+                entry_date=entry_monday.strftime("%Y-%m-%d"),
+                exit_date=exit_monday.strftime("%Y-%m-%d"),
                 entry_price=entry_price,
                 exit_price=exit_price,
                 quantity=quantity,
@@ -390,18 +357,22 @@ class BacktestEngine:
         target: datetime,
         field: str = "close",
     ) -> float | None:
-        """Get a price field (open/close) for a specific date."""
+        """Get a price field (open/close) for a specific date, or nearest trading day."""
+        # Exact match first
         for p in prices:
             if p.timestamp.date() == target.date():
                 return p.open if field == "open" else p.close
+
+        # Try next day (if Monday was holiday, use Tuesday)
+        next_day = target + timedelta(days=1)
+        for p in prices:
+            if p.timestamp.date() == next_day.date():
+                return p.open if field == "open" else p.close
+
         return None
 
-    def _compile_results(
-        self,
-        weeks: list[WeekResult],
-        peak_capital: float,
-    ) -> BacktestResult:
-        """Aggregate per-week results into final backtest stats."""
+    def _compile_results(self, weeks: list[WeekResult]) -> BacktestResult:
+        """Aggregate per-week results into final stats."""
         result = BacktestResult(
             weeks=weeks,
             starting_capital=self.capital,
@@ -415,20 +386,19 @@ class BacktestEngine:
         result.total_pnl = result.ending_capital - self.capital
         result.total_return_pct = (result.total_pnl / self.capital * 100) if self.capital > 0 else 0
 
-        # Per-week stats
         weekly_returns = [w.weekly_return_pct for w in weeks]
-        result.avg_weekly_return_pct = sum(weekly_returns) / len(weekly_returns) if weekly_returns else 0
+        result.avg_weekly_return_pct = np.mean(weekly_returns) if weekly_returns else 0
         result.best_week_return_pct = max(weekly_returns) if weekly_returns else 0
         result.worst_week_return_pct = min(weekly_returns) if weekly_returns else 0
 
-        # Trade-level stats
+        # Trade stats
         all_trades = [t for w in weeks for t in w.trades]
         result.total_trades = len(all_trades)
         result.winning_trades = sum(1 for t in all_trades if t.pnl > 0)
         result.losing_trades = sum(1 for t in all_trades if t.pnl <= 0)
         result.win_rate = (result.winning_trades / result.total_trades * 100) if result.total_trades > 0 else 0
 
-        # Max drawdown (based on weekly capital values)
+        # Max drawdown
         max_dd = 0.0
         running_peak = self.capital
         for w in weeks:
@@ -439,16 +409,13 @@ class BacktestEngine:
                 max_dd = dd
         result.max_drawdown_pct = max_dd
 
-        # Sharpe-like ratio: avg weekly return / std of weekly returns (annualized)
+        # Annualized Sharpe ratio (weekly returns, 52 periods/year)
         if len(weekly_returns) > 1:
             avg_ret = np.mean(weekly_returns)
             std_ret = np.std(weekly_returns, ddof=1)
             if std_ret > 0:
-                # Annualize: multiply by sqrt(52) since weekly periods
                 result.sharpe_ratio = float((avg_ret / std_ret) * np.sqrt(52))
             else:
                 result.sharpe_ratio = 0.0
-        else:
-            result.sharpe_ratio = 0.0
 
         return result
