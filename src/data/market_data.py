@@ -1,4 +1,7 @@
-"""Market data fetching and technical indicator computation."""
+"""Market data fetching and technical indicator computation.
+
+Uses only pandas/numpy for indicators — no external TA library needed.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +10,9 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import ta
 import yfinance as yf
 
-from src.models import Asset, PriceData, TechnicalIndicators
+from src.models import PriceData, TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ class MarketDataProvider:
             return None
 
     def compute_indicators(self, prices: list[PriceData]) -> TechnicalIndicators:
-        """Compute all technical indicators from price data."""
+        """Compute all technical indicators from price data using pandas/numpy."""
         if len(prices) < 20:
             return TechnicalIndicators()
 
@@ -77,58 +79,72 @@ class MarketDataProvider:
         volume = df["volume"].astype(float)
         current_price = close.iloc[-1]
 
-        # RSI
-        rsi = ta.momentum.RSIIndicator(close, window=14)
-        rsi_val = rsi.rsi().iloc[-1]
+        # --- RSI (14) ---
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = (-delta).where(delta < 0, 0.0)
+        avg_gain = gain.ewm(alpha=1 / 14, min_periods=14).mean()
+        avg_loss = loss.ewm(alpha=1 / 14, min_periods=14).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi_series = 100 - (100 / (1 + rs))
+        rsi_val = rsi_series.iloc[-1]
 
-        # MACD
-        macd = ta.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
-        macd_val = macd.macd().iloc[-1]
-        macd_signal = macd.macd_signal().iloc[-1]
-        macd_hist = macd.macd_diff().iloc[-1]
+        # --- MACD (12, 26, 9) ---
+        ema_12 = close.ewm(span=12).mean()
+        ema_26 = close.ewm(span=26).mean()
+        macd_line = ema_12 - ema_26
+        macd_signal = macd_line.ewm(span=9).mean()
+        macd_hist = macd_line - macd_signal
 
-        # Bollinger Bands
-        bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
-        bb_upper = bb.bollinger_hband().iloc[-1]
-        bb_middle = bb.bollinger_mavg().iloc[-1]
-        bb_lower = bb.bollinger_lband().iloc[-1]
-        bb_width = (bb_upper - bb_lower) / bb_middle if bb_middle > 0 else 0
+        # --- Bollinger Bands (20, 2) ---
+        sma_20 = close.rolling(20).mean()
+        std_20 = close.rolling(20).std()
+        bb_upper = sma_20 + 2 * std_20
+        bb_lower = sma_20 - 2 * std_20
+        bb_middle_val = sma_20.iloc[-1]
+        bb_upper_val = bb_upper.iloc[-1]
+        bb_lower_val = bb_lower.iloc[-1]
+        bb_width = (bb_upper_val - bb_lower_val) / bb_middle_val if bb_middle_val > 0 else 0
 
-        # ATR
-        atr_indicator = ta.volatility.AverageTrueRange(high, low, close, window=14)
-        atr_val = atr_indicator.average_true_range().iloc[-1]
+        # --- ATR (14) ---
+        tr = pd.concat([
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low - close.shift(1)).abs(),
+        ], axis=1).max(axis=1)
+        atr_val = tr.rolling(14).mean().iloc[-1]
         atr_pct = (atr_val / current_price * 100) if current_price > 0 else 0
 
-        # Moving averages
-        sma_20 = close.rolling(20).mean().iloc[-1]
+        # --- Moving averages ---
+        sma_20_val = sma_20.iloc[-1]
         ema_9 = close.ewm(span=9).mean().iloc[-1]
         ema_21 = close.ewm(span=21).mean().iloc[-1]
 
-        # Volume
+        # --- Volume ---
         vol_sma_20 = volume.rolling(20).mean().iloc[-1]
         rel_volume = (volume.iloc[-1] / vol_sma_20) if vol_sma_20 > 0 else 1.0
 
-        # Keltner Channels (for squeeze detection)
+        # --- Keltner Channels (for squeeze detection) ---
         kc_middle = close.ewm(span=20).mean()
         kc_range = atr_val * 1.5
         kc_upper = kc_middle.iloc[-1] + kc_range
         kc_lower = kc_middle.iloc[-1] - kc_range
 
         # Squeeze: BB inside KC
-        squeeze_on = bb_upper < kc_upper and bb_lower > kc_lower
+        squeeze_on = bb_upper_val < kc_upper and bb_lower_val > kc_lower
 
         return TechnicalIndicators(
             rsi_14=_safe_float(rsi_val),
-            macd=_safe_float(macd_val),
-            macd_signal=_safe_float(macd_signal),
-            macd_histogram=_safe_float(macd_hist),
-            bollinger_upper=_safe_float(bb_upper),
-            bollinger_middle=_safe_float(bb_middle),
-            bollinger_lower=_safe_float(bb_lower),
+            macd=_safe_float(macd_line.iloc[-1]),
+            macd_signal=_safe_float(macd_signal.iloc[-1]),
+            macd_histogram=_safe_float(macd_hist.iloc[-1]),
+            bollinger_upper=_safe_float(bb_upper_val),
+            bollinger_middle=_safe_float(bb_middle_val),
+            bollinger_lower=_safe_float(bb_lower_val),
             bollinger_width=_safe_float(bb_width),
             atr_14=_safe_float(atr_val),
             atr_pct=_safe_float(atr_pct),
-            sma_20=_safe_float(sma_20),
+            sma_20=_safe_float(sma_20_val),
             ema_9=_safe_float(ema_9),
             ema_21=_safe_float(ema_21),
             volume_sma_20=_safe_float(vol_sma_20),
@@ -164,43 +180,6 @@ class MarketDataProvider:
         except Exception:
             pass
         return None
-
-    def scan_universe(
-        self,
-        symbols: list[str],
-        min_volume: int = 500_000,
-        min_price: float = 1.0,
-        max_price: float = 500.0,
-    ) -> list[dict]:
-        """Scan a list of symbols and return those meeting basic criteria."""
-        results = []
-        for symbol in symbols:
-            try:
-                prices = self.get_price_history(symbol, days=30)
-                if len(prices) < 20:
-                    continue
-
-                latest = prices[-1]
-                avg_vol = np.mean([p.volume for p in prices[-20:]])
-
-                if avg_vol < min_volume:
-                    continue
-                if latest.close < min_price or latest.close > max_price:
-                    continue
-
-                indicators = self.compute_indicators(prices)
-                results.append({
-                    "symbol": symbol,
-                    "price": latest.close,
-                    "avg_volume": int(avg_vol),
-                    "indicators": indicators,
-                    "prices": prices,
-                })
-            except Exception as e:
-                logger.debug(f"Skipping {symbol} in scan: {e}")
-                continue
-
-        return results
 
 
 def _safe_float(val: float) -> float | None:

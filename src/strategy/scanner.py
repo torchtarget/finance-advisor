@@ -17,16 +17,16 @@ DEFAULT_UNIVERSE = [
     # US Large-cap Tech (high beta)
     "NVDA", "AMD", "TSLA", "META", "AMZN", "GOOGL", "MSFT", "AAPL", "NFLX", "CRM",
     # US Growth / Momentum
-    "PLTR", "SNOW", "COIN", "SHOP", "SQ", "ROKU", "DKNG", "RBLX", "HOOD", "SOFI",
+    "PLTR", "SNOW", "COIN", "SHOP", "ROKU", "DKNG", "RBLX", "HOOD", "SOFI",
     # Biotech (volatile)
     "MRNA", "BNTX", "CRSP", "EDIT", "NTLA", "BEAM",
     # Meme / High Short Interest
-    "GME", "AMC", "BBBY", "RIVN", "LCID", "NIO",
+    "GME", "AMC", "RIVN", "LCID", "NIO",
     # Semis
     "MU", "MRVL", "AVGO", "QCOM", "ARM", "SMCI",
     # Energy (volatile)
-    "OXY", "DVN", "FANG", "MRO",
-    # ETFs (leveraged for more action)
+    "OXY", "DVN", "FANG",
+    # Leveraged ETFs (for aggressive plays)
     "TQQQ", "SOXL", "SPXL", "UPRO", "TNA",
 ]
 

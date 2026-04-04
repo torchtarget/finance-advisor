@@ -70,12 +70,9 @@ class PositionSizer:
             if quantity <= 0:
                 continue
 
-            # Determine order type
-            exec_cfg = self.config.execution
-            order_type = OrderType(exec_cfg.default_order_type)
+            # Advisory mode: recommend market orders
+            order_type = OrderType.MARKET
             limit_price = None
-            if order_type == OrderType.LIMIT:
-                limit_price = price * (1 + exec_cfg.limit_price_buffer)
 
             # Max loss: without stop-loss, you can lose the full position
             max_loss_pct = alloc_pct * 100  # Worst case = total loss of position

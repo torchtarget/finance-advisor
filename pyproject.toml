@@ -7,7 +7,7 @@ dependencies = [
     "yfinance>=0.2.0",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
-    "ta>=0.11.0",
+    # ta indicators computed with pandas/numpy directly
     "apscheduler>=3.10.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
