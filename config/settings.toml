@@ -1,0 +1,120 @@
+[degiro]
+# Credentials — override via environment variables:
+#   DEGIRO_USERNAME, DEGIRO_PASSWORD, DEGIRO_TOTP_SECRET
+username = ""
+password = ""
+totp_secret = ""
+account_type = "ACTIVE"
+
+[strategy]
+# Lookback period for technical indicators (trading days)
+lookback_days = 30
+
+# Holding period target (calendar days)
+holding_period_days = 7
+
+# Minimum signal confidence to act (0.0 - 1.0)
+# Lower threshold = more trades, higher threshold = fewer but stronger conviction
+min_confidence = 0.5
+
+# Maximum concurrent positions (1 = full concentration)
+max_positions = 3
+
+# Strategies to enable — all are aggressive/short-term focused
+enabled_strategies = [
+    "momentum_breakout",
+    "mean_reversion_oversold",
+    "squeeze_setup",
+    "earnings_gap",
+    "high_short_interest",
+    "volume_spike",
+]
+
+[risk]
+# HIGH RISK: Only constraint is never losing more than invested capital.
+# No margin, no leverage beyond what's in the account.
+# Starting capital: $1,000
+
+# Can go all-in on one trade
+max_position_size = 1.0
+
+# Accept total loss of invested capital
+weekly_loss_limit = 1.0
+
+# No stop-loss — ride the full week
+stop_loss = 0.0
+
+# No take-profit — manual exit or end-of-week close
+take_profit = 0.0
+
+use_trailing_stop = false
+
+# Go heavy on highest conviction pick
+sizing_method = "conviction_weighted"
+
+[market_data]
+alpha_vantage_key = ""
+
+# Exchanges to scan
+# 710 = XAMS, 663 = XETRA, 906 = NYSE, 908 = NASDAQ
+exchanges = [906, 908]
+
+# Focus on stocks for maximum volatility
+asset_types = ["stock"]
+
+# Filters for finding high-volatility candidates
+min_avg_volume = 500000
+min_price = 1.0
+max_price = 500.0
+min_volatility_percentile = 75
+
+[scanner]
+# Weekly scanner settings — find the best short-term plays
+
+# Pre-market gap threshold (fraction)
+gap_threshold = 0.03
+
+# Volume spike multiplier vs 20-day average
+volume_spike_multiplier = 2.0
+
+# RSI oversold/overbought thresholds
+rsi_oversold = 25
+rsi_overbought = 75
+
+# Short interest ratio threshold
+short_interest_min = 10.0
+
+# Minimum average true range (ATR) as % of price
+min_atr_pct = 3.0
+
+# Days until earnings to flag as earnings play
+earnings_window_days = 7
+
+[execution]
+# "paper" or "live" — START WITH PAPER
+mode = "paper"
+
+# Aggressive: use market orders for speed, limit for entries
+default_order_type = "market"
+
+# For limit orders: buffer from current price (fraction)
+limit_price_buffer = 0.005
+
+# Auto-execute recommendations without confirmation?
+auto_execute = false
+
+[schedule]
+# Weekly cycle
+scan_day = "monday"      # Day to scan and enter positions
+scan_time = "09:35"      # Just after market open
+exit_day = "friday"
+exit_time = "15:30"      # Before market close
+
+# Mid-week check
+midweek_check = true
+midweek_day = "wednesday"
+midweek_time = "12:00"
+
+[alerts]
+telegram_bot_token = ""
+telegram_chat_id = ""

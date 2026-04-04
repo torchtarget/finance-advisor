@@ -1,0 +1,34 @@
+[project]
+name = "finance-advisor"
+version = "0.1.0"
+description = "Short-term financial advisor tool with DeGiro integration"
+requires-python = ">=3.11"
+dependencies = [
+    "degiro-connector>=2.0.0",
+    "yfinance>=0.2.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "ta>=0.11.0",
+    "apscheduler>=3.10.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "rich>=13.0.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+finance-advisor = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
