@@ -306,8 +306,9 @@ class BacktestEngine:
         if not recommendations:
             return week
 
-        # Execute trades: buy at entry Monday open, sell at exit Monday open
-        total_pnl = 0.0
+        # Resolve actual Monday open prices and compute quantities
+        # Deploy ALL capital — redistribute rounding leftovers
+        trade_specs: list[dict] = []
         for rec in recommendations:
             symbol = rec.signal.asset.symbol
             if symbol not in price_cache:
@@ -320,25 +321,61 @@ class BacktestEngine:
             if entry_price is None or exit_price is None or entry_price <= 0:
                 continue
 
-            # Recompute quantity at actual entry price
-            alloc_capital = capital * (rec.allocation_pct / 100.0)
-            quantity = int(alloc_capital / entry_price)
+            trade_specs.append({
+                "rec": rec,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "quantity": 0,
+            })
+
+        if not trade_specs:
+            return week
+
+        # First pass: allocate based on sizer percentages
+        remaining = capital
+        for spec in trade_specs:
+            alloc = capital * (spec["rec"].allocation_pct / 100.0)
+            qty = int(alloc / spec["entry_price"])
+            spec["quantity"] = qty
+            remaining -= qty * spec["entry_price"]
+
+        # Second pass: redistribute ALL remaining capital across positions
+        # Keep buying shares of the cheapest affordable stock until nothing fits
+        changed = True
+        while changed and remaining > 0:
+            changed = False
+            for spec in trade_specs:
+                price = spec["entry_price"]
+                if price <= remaining:
+                    extra = int(remaining / price)
+                    if extra > 0:
+                        spec["quantity"] += extra
+                        remaining -= extra * price
+                        changed = True
+
+        # Build trade summaries
+        total_pnl = 0.0
+        for spec in trade_specs:
+            quantity = spec["quantity"]
             if quantity <= 0:
                 continue
 
+            entry_price = spec["entry_price"]
+            exit_price = spec["exit_price"]
             pnl = (exit_price - entry_price) * quantity
             return_pct = ((exit_price - entry_price) / entry_price) * 100
+            actual_alloc = (entry_price * quantity / capital * 100) if capital > 0 else 0
 
             trade = TradeSummary(
-                symbol=symbol,
-                strategy=rec.signal.strategy.value,
-                confidence=rec.signal.confidence,
+                symbol=spec["rec"].signal.asset.symbol,
+                strategy=spec["rec"].signal.strategy.value,
+                confidence=spec["rec"].signal.confidence,
                 entry_date=entry_monday.strftime("%Y-%m-%d"),
                 exit_date=exit_monday.strftime("%Y-%m-%d"),
                 entry_price=entry_price,
                 exit_price=exit_price,
                 quantity=quantity,
-                allocation_pct=rec.allocation_pct,
+                allocation_pct=actual_alloc,
                 pnl=pnl,
                 return_pct=return_pct,
             )

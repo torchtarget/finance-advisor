@@ -1,4 +1,8 @@
-"""Position sizing for aggressive weekly trading."""
+"""Position sizing for aggressive weekly trading.
+
+MAX RISK mode: deploy ALL capital every week. No idle cash.
+Supports fractional-share-aware redistribution for whole-share brokers like DeGiro.
+"""
 
 from __future__ import annotations
 
@@ -12,11 +16,9 @@ logger = logging.getLogger(__name__)
 class PositionSizer:
     """Determines how much capital to allocate to each trade.
 
-    Sizing methods:
-    - equal: Split capital equally across all signals
-    - conviction_weighted: Allocate proportional to signal confidence
-    - all_in: Put everything into the #1 signal
-    - kelly: Kelly criterion based on expected return and win probability
+    Key principle: DEPLOY EVERYTHING. Any cash left idle is wasted opportunity
+    in a high-risk weekly strategy. Leftover from rounding to whole shares
+    gets redistributed to the next position.
     """
 
     def __init__(self, config: AppConfig):
@@ -27,10 +29,9 @@ class PositionSizer:
         signals: list[Signal],
         available_capital: float,
     ) -> list[Recommendation]:
-        """Generate recommendations with position sizes from signals.
+        """Generate recommendations deploying ALL available capital.
 
-        Core constraint: never risk more than available_capital.
-        No margin, no leverage — can only lose what's in the account.
+        No idle cash. Leftover from whole-share rounding goes to next position.
         """
         if not signals or available_capital <= 0:
             return []
@@ -50,46 +51,75 @@ class PositionSizer:
         # Cap each position at max_position_size
         allocations = [min(a, max_size) for a in allocations]
 
-        # Normalize if total > 1.0
+        # Normalize so total = 1.0 (deploy 100% of capital)
         total = sum(allocations)
-        if total > 1.0:
+        if total > 0:
             allocations = [a / total for a in allocations]
 
+        # Build recommendations with whole-share redistribution
         recommendations = []
+        remaining_capital = available_capital
+
         for i, (signal, alloc_pct) in enumerate(zip(signals, allocations)):
-            if alloc_pct <= 0:
+            if alloc_pct <= 0 or remaining_capital <= 0:
                 continue
 
-            capital_for_position = available_capital * alloc_pct
             price = signal.entry_price
-
             if price <= 0:
                 continue
 
+            # For the LAST position, give it ALL remaining capital
+            if i == len(signals) - 1 or i == len(allocations) - 1:
+                capital_for_position = remaining_capital
+            else:
+                capital_for_position = available_capital * alloc_pct
+
             quantity = int(capital_for_position / price)
             if quantity <= 0:
+                # Can't afford even 1 share — give capital to next position
                 continue
 
-            # Advisory mode: recommend market orders
-            order_type = OrderType.MARKET
-            limit_price = None
+            actual_cost = quantity * price
+            remaining_capital -= actual_cost
 
-            # Max loss: without stop-loss, you can lose the full position
-            max_loss_pct = alloc_pct * 100  # Worst case = total loss of position
+            actual_alloc_pct = (actual_cost / available_capital) * 100
 
             recommendations.append(
                 Recommendation(
                     signal=signal,
                     suggested_quantity=quantity,
-                    allocation_pct=alloc_pct * 100,
-                    suggested_order_type=order_type,
-                    suggested_limit_price=limit_price,
+                    allocation_pct=actual_alloc_pct,
+                    suggested_order_type=OrderType.MARKET,
+                    suggested_limit_price=None,
                     expected_return_pct=signal.expected_return_pct,
-                    max_loss_pct=max_loss_pct,
+                    max_loss_pct=actual_alloc_pct,
                     rationale_summary=signal.rationale,
                     rank=i + 1,
                 )
             )
+
+        # Redistribute ALL remaining capital across existing positions
+        # Keep cycling through positions until we can't buy any more shares
+        if remaining_capital > 0 and recommendations:
+            changed = True
+            while changed and remaining_capital > 0:
+                changed = False
+                for rec in recommendations:
+                    price = rec.signal.entry_price
+                    if price <= 0 or price > remaining_capital:
+                        continue
+                    extra = int(remaining_capital / price)
+                    if extra > 0:
+                        rec.suggested_quantity += extra
+                        cost = extra * price
+                        remaining_capital -= cost
+                        changed = True
+
+            # Recalculate allocation percentages
+            for rec in recommendations:
+                actual_cost = rec.suggested_quantity * rec.signal.entry_price
+                rec.allocation_pct = (actual_cost / available_capital) * 100
+                rec.max_loss_pct = rec.allocation_pct
 
         return recommendations
 
@@ -106,29 +136,23 @@ class PositionSizer:
     def _all_in(self, signals: list[Signal]) -> list[float]:
         allocations = [0.0] * len(signals)
         if signals:
-            allocations[0] = 1.0  # Signals are already ranked
+            allocations[0] = 1.0
         return allocations
 
     def _kelly(self, signals: list[Signal]) -> list[float]:
-        """Simplified Kelly criterion: f* = (bp - q) / b
-
-        Where:
-        - b = odds (expected_return / risk)
-        - p = probability of win (confidence)
-        - q = probability of loss (1 - confidence)
-        """
+        """Simplified Kelly criterion: f* = (bp - q) / b"""
         allocations = []
         for signal in signals:
             p = signal.confidence
             q = 1 - p
             expected_ret = (signal.expected_return_pct or 5) / 100
-            risk = 1.0  # Can lose entire position (high risk)
+            risk = 1.0
 
             b = expected_ret / risk if risk > 0 else 0
             kelly_fraction = (b * p - q) / b if b > 0 else 0
             kelly_fraction = max(kelly_fraction, 0)
 
-            # Half-Kelly for some safety even in aggressive mode
-            allocations.append(kelly_fraction * 0.5)
+            # Full Kelly — no half-Kelly, max risk mode
+            allocations.append(kelly_fraction)
 
         return allocations
