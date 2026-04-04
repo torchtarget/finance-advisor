@@ -1,17 +1,16 @@
 [strategy]
-# Lookback period for technical indicators (trading days)
 lookback_days = 30
-
-# Holding period: buy Monday open, sell next Monday open
 holding_period_days = 7
 
-# Minimum signal confidence to act (0.0 - 1.0)
+# Higher confidence = better filter, avoids catastrophic picks
 min_confidence = 0.5
 
-# Maximum concurrent recommendations
-max_positions = 3
+# ALL-IN: one pick, full capital, maximum risk
+max_positions = 1
 
-# Strategies to enable — all aggressive/short-term
+# Rank signals by expected return (not confidence)
+ranking = "expected_return"
+
 enabled_strategies = [
     "momentum_breakout",
     "mean_reversion_oversold",
@@ -22,35 +21,19 @@ enabled_strategies = [
 ]
 
 [risk]
-# HIGH RISK — can lose entire investment in a single week.
-
-# Can go all-in on one pick
+# MAX RISK — all-in every week, accept total loss
 max_position_size = 1.0
-
-# Accept total loss
 weekly_loss_limit = 1.0
-
-# No stop-loss — hold the full week
 stop_loss = 0.0
 take_profit = 0.0
 use_trailing_stop = false
-
-# Conviction-weighted: heaviest on #1 pick
-sizing_method = "conviction_weighted"
+sizing_method = "all_in"
 
 [market_data]
-# API keys for supplementary data (optional)
 finnhub_api_key = ""
 newsapi_key = ""
-
-# Scan US + European exchanges available on DeGiro
-# US: NYSE (906), NASDAQ (908)
-# EU: Euronext AMS (710), XETRA (663), LSE (718), Euronext Paris (712)
 exchanges = [906, 908, 710, 663, 718, 712]
-
 asset_types = ["stock"]
-
-# Filters — relaxed for EU stocks (lower volume, higher prices in EUR)
 min_avg_volume = 100000
 min_price = 1.0
 max_price = 1000.0
@@ -66,7 +49,6 @@ min_atr_pct = 3.0
 earnings_window_days = 7
 
 [schedule]
-# Buy Monday open, sell next Monday open
 entry_day = "monday"
 exit_day = "monday"
 

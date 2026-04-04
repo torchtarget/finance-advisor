@@ -19,7 +19,8 @@ class StrategyConfig(BaseModel):
     lookback_days: int = 30
     holding_period_days: int = 7
     min_confidence: float = 0.5
-    max_positions: int = 3
+    max_positions: int = 1
+    ranking: str = "expected_return"  # "confidence" or "expected_return"
     enabled_strategies: list[str] = Field(
         default_factory=lambda: [
             "momentum_breakout",
@@ -38,7 +39,7 @@ class RiskConfig(BaseModel):
     stop_loss: float = 0.0
     take_profit: float = 0.0
     use_trailing_stop: bool = False
-    sizing_method: str = "conviction_weighted"
+    sizing_method: str = "all_in"
 
 
 class MarketDataConfig(BaseModel):

@@ -296,11 +296,19 @@ class WeeklyScanner:
                         f"Strategy {strategy.name} failed on {candidate.asset.symbol}: {e}"
                     )
 
-        # Rank by confidence then expected return
-        all_signals.sort(
-            key=lambda s: (s.confidence, s.expected_return_pct or 0),
-            reverse=True,
-        )
+        # Rank signals based on config
+        if self.config.strategy.ranking == "expected_return":
+            # MAX RISK: pick the biggest potential movers
+            all_signals.sort(
+                key=lambda s: (s.expected_return_pct or 0, s.confidence),
+                reverse=True,
+            )
+        else:
+            # Conservative: pick highest confidence
+            all_signals.sort(
+                key=lambda s: (s.confidence, s.expected_return_pct or 0),
+                reverse=True,
+            )
 
         # Deduplicate — best signal per symbol
         seen_symbols: set[str] = set()
