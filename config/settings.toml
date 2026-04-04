@@ -2,7 +2,7 @@
 # Lookback period for technical indicators (trading days)
 lookback_days = 30
 
-# Holding period target (calendar days)
+# Holding period: buy Monday open, sell next Monday open
 holding_period_days = 7
 
 # Minimum signal confidence to act (0.0 - 1.0)
@@ -22,76 +22,53 @@ enabled_strategies = [
 ]
 
 [risk]
-# HIGH RISK: Only constraint is never losing more than invested capital.
-# No margin, no leverage. Starting capital: $1,000
+# HIGH RISK — can lose entire investment in a single week.
 
 # Can go all-in on one pick
 max_position_size = 1.0
 
-# Accept total loss of invested capital
+# Accept total loss
 weekly_loss_limit = 1.0
 
-# No stop-loss — ride the full week
+# No stop-loss — hold the full week
 stop_loss = 0.0
-
-# No take-profit — manual decision
 take_profit = 0.0
-
 use_trailing_stop = false
 
-# Go heavy on highest conviction pick
+# Conviction-weighted: heaviest on #1 pick
 sizing_method = "conviction_weighted"
 
 [market_data]
-# API keys for supplementary data (optional, enhances signals)
+# API keys for supplementary data (optional)
 finnhub_api_key = ""
 newsapi_key = ""
 
-# Instruments available on DeGiro — focus on US exchanges
-# These are scanned for weekly opportunities
-# 906 = NYSE, 908 = NASDAQ (also available on DeGiro)
-exchanges = [906, 908]
+# Scan US + European exchanges available on DeGiro
+# US: NYSE (906), NASDAQ (908)
+# EU: Euronext AMS (710), XETRA (663), LSE (718), Euronext Paris (712)
+exchanges = [906, 908, 710, 663, 718, 712]
 
 asset_types = ["stock"]
 
-# Filters
-min_avg_volume = 500000
+# Filters — relaxed for EU stocks (lower volume, higher prices in EUR)
+min_avg_volume = 100000
 min_price = 1.0
-max_price = 500.0
+max_price = 1000.0
 min_volatility_percentile = 75
 
 [scanner]
-# Weekly scanner settings
-
-# Pre-market gap threshold (fraction)
 gap_threshold = 0.03
-
-# Volume spike multiplier vs 20-day average
 volume_spike_multiplier = 2.0
-
-# RSI oversold/overbought thresholds
 rsi_oversold = 25
 rsi_overbought = 75
-
-# Short interest ratio threshold
 short_interest_min = 10.0
-
-# Minimum ATR as % of price
 min_atr_pct = 3.0
-
-# Days until earnings to flag as catalyst
 earnings_window_days = 7
 
 [schedule]
-# Weekly cycle
-scan_day = "monday"
-scan_time = "09:35"
-exit_day = "friday"
-exit_time = "15:30"
-
-midweek_check = true
-midweek_day = "wednesday"
-midweek_time = "12:00"
+# Buy Monday open, sell next Monday open
+entry_day = "monday"
+exit_day = "monday"
 
 [alerts]
 telegram_bot_token = ""
