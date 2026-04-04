@@ -16,6 +16,7 @@ from src.execution.paper_trader import PaperTrader
 from src.risk.position_sizer import PositionSizer
 from src.strategy.scanner import WeeklyScanner
 from src.strategy import strategies as _  # noqa: F401 — registers strategies
+from src.backtest.engine import BacktestEngine
 
 console = Console()
 logger = logging.getLogger("finance-advisor")
@@ -147,6 +148,79 @@ def cmd_serve(args):
     uvicorn.run("src.api.server:app", host="0.0.0.0", port=args.port, reload=args.reload)
 
 
+def cmd_backtest(args):
+    """Run a historical backtest and display results."""
+    config = load_config()
+
+    console.print(f"\n[bold]Running backtest: {args.weeks} weeks, ${args.capital:,.0f} capital[/bold]\n")
+
+    engine = BacktestEngine(config=config, capital=args.capital)
+    result = engine.run(num_weeks=args.weeks)
+
+    if not result.weeks:
+        console.print("[yellow]No trading weeks found in the date range.[/yellow]")
+        return
+
+    # Per-week detail table
+    detail_table = Table(title="Weekly Backtest Results")
+    detail_table.add_column("Week", style="cyan")
+    detail_table.add_column("Picks", style="magenta")
+    detail_table.add_column("Entry Prices", justify="right")
+    detail_table.add_column("Exit Prices", justify="right")
+    detail_table.add_column("Weekly P&L", justify="right")
+    detail_table.add_column("Return", justify="right")
+    detail_table.add_column("Capital", justify="right", style="dim")
+
+    for week in result.weeks:
+        if week.trades:
+            symbols = ", ".join(t.symbol for t in week.trades)
+            entries = ", ".join(f"${t.entry_price:.2f}" for t in week.trades)
+            exits = ", ".join(f"${t.exit_price:.2f}" for t in week.trades)
+        else:
+            symbols = "[dim]no picks[/dim]"
+            entries = "---"
+            exits = "---"
+
+        pnl_style = "green" if week.weekly_pnl >= 0 else "red"
+        ret_style = "green" if week.weekly_return_pct >= 0 else "red"
+
+        detail_table.add_row(
+            f"{week.week_start} to {week.week_end}",
+            symbols,
+            entries,
+            exits,
+            f"[{pnl_style}]${week.weekly_pnl:+,.2f}[/{pnl_style}]",
+            f"[{ret_style}]{week.weekly_return_pct:+.2f}%[/{ret_style}]",
+            f"${week.capital_end:,.2f}",
+        )
+
+    console.print(detail_table)
+
+    # Summary stats table
+    console.print()
+    summary_table = Table(title="Backtest Summary", show_header=False, box=None, padding=(0, 2))
+    summary_table.add_column("Metric", style="bold")
+    summary_table.add_column("Value", justify="right")
+
+    total_style = "green" if result.total_return_pct >= 0 else "red"
+
+    summary_table.add_row("Starting Capital", f"${result.starting_capital:,.2f}")
+    summary_table.add_row("Ending Capital", f"${result.ending_capital:,.2f}")
+    summary_table.add_row("Total P&L", f"[{total_style}]${result.total_pnl:+,.2f}[/{total_style}]")
+    summary_table.add_row("Total Return", f"[{total_style}]{result.total_return_pct:+.2f}%[/{total_style}]")
+    summary_table.add_row("Win Rate", f"{result.win_rate:.1f}%")
+    summary_table.add_row("Avg Weekly Return", f"{result.avg_weekly_return_pct:+.2f}%")
+    summary_table.add_row("Best Week", f"[green]{result.best_week_return_pct:+.2f}%[/green]")
+    summary_table.add_row("Worst Week", f"[red]{result.worst_week_return_pct:+.2f}%[/red]")
+    summary_table.add_row("Max Drawdown", f"[red]{result.max_drawdown_pct:.2f}%[/red]")
+    summary_table.add_row("Sharpe Ratio (ann.)", f"{result.sharpe_ratio:.2f}")
+    summary_table.add_row("Total Trades", str(result.total_trades))
+    summary_table.add_row("Winning / Losing", f"{result.winning_trades} / {result.losing_trades}")
+
+    console.print(summary_table)
+    console.print()
+
+
 def main():
     setup_logging()
     print_banner()
@@ -170,6 +244,12 @@ def main():
     serve_parser.add_argument("--port", type=int, default=8000, help="Port")
     serve_parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
     serve_parser.set_defaults(func=cmd_serve)
+
+    # backtest
+    bt_parser = subparsers.add_parser("backtest", help="Run historical backtest")
+    bt_parser.add_argument("--weeks", type=int, default=12, help="Number of weeks to backtest")
+    bt_parser.add_argument("--capital", type=float, default=1_000, help="Starting capital")
+    bt_parser.set_defaults(func=cmd_backtest)
 
     args = parser.parse_args()
 

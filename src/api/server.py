@@ -20,6 +20,7 @@ from src.models import Recommendation
 from src.risk.position_sizer import PositionSizer
 from src.strategy.scanner import WeeklyScanner, DEFAULT_UNIVERSE
 from src.strategy import strategies as _  # noqa: F401
+from src.backtest.engine import BacktestEngine
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,14 @@ def paper_close_all():
         ],
         "portfolio": get_portfolio(),
     }
+
+
+@app.get("/api/backtest")
+def run_backtest(weeks: int = 12, capital: float = 1_000.0):
+    """Run a historical backtest and return results as JSON."""
+    engine = BacktestEngine(config=config, capital=capital)
+    result = engine.run(num_weeks=weeks)
+    return result.to_dict()
 
 
 @app.get("/api/universe")
