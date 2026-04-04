@@ -1,7 +1,7 @@
 """Weekly scanner — finds the best speculative candidates for NEXT Monday.
 
 Scans Friday's close data to recommend buys for Monday open.
-Covers US + European instruments available on DeGiro.
+Covers US + European instruments available on DeGiro across 10+ exchanges.
 """
 
 from __future__ import annotations
@@ -16,80 +16,152 @@ from src.strategy.base import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 
-# Instruments available on DeGiro — US + European exchanges
+# Full universe of instruments available on DeGiro — high volatility focus
 DEFAULT_UNIVERSE = [
-    # === US — NYSE & NASDAQ (available on DeGiro) ===
+    # =====================================================================
+    # US — NYSE & NASDAQ
+    # =====================================================================
 
-    # US Large-cap Tech (high beta)
+    # Large-cap Tech (high beta)
     "NVDA", "AMD", "TSLA", "META", "AMZN", "GOOGL", "MSFT", "AAPL", "NFLX", "CRM",
-    # US Growth / Momentum
-    "PLTR", "SNOW", "COIN", "SHOP", "ROKU", "DKNG", "RBLX", "HOOD", "SOFI",
-    # US Biotech (volatile)
+    # Growth / Momentum
+    "PLTR", "SNOW", "COIN", "SHOP", "ROKU", "DKNG", "RBLX", "HOOD", "SOFI", "SPOT",
+    # Biotech (volatile)
     "MRNA", "BNTX", "CRSP", "EDIT", "NTLA", "BEAM",
-    # US Meme / High Short Interest
+    # Meme / High Short Interest
     "GME", "AMC", "RIVN", "LCID", "NIO",
-    # US Semis
+    # Semis
     "MU", "MRVL", "AVGO", "QCOM", "ARM", "SMCI",
-    # US Energy (volatile)
+    # Energy (volatile)
     "OXY", "DVN", "FANG",
-    # US Leveraged ETFs
+    # Leveraged ETFs (US-listed)
     "TQQQ", "SOXL", "SPXL", "UPRO", "TNA",
+    # Crypto miners & proxies
+    "MSTR", "MARA", "RIOT", "CLSK", "HUT",
 
-    # === Europe — Amsterdam (Euronext AMS, DeGiro home exchange) ===
+    # =====================================================================
+    # Europe — Euronext Amsterdam
+    # =====================================================================
     "ASML.AS", "ADYEN.AS", "PHIA.AS", "INGA.AS",
     "ASM.AS", "BESI.AS", "AKZA.AS", "WKL.AS",
+    "ALFEN.AS", "LIGHT.AS",
 
-    # === Europe — XETRA / Frankfurt (German stocks on DeGiro) ===
+    # =====================================================================
+    # Europe — XETRA / Frankfurt
+    # =====================================================================
     "SAP.DE", "SIE.DE", "ALV.DE", "BAS.DE", "DTE.DE",
     "BMW.DE", "VOW3.DE", "IFX.DE", "MRK.DE", "RHM.DE",
+    "TKA.DE",
 
-    # === Europe — London (LSE, available on DeGiro) ===
+    # =====================================================================
+    # Europe — London (LSE)
+    # =====================================================================
     "SHEL.L", "AZN.L", "HSBA.L", "GSK.L", "BP.L",
     "RIO.L", "LSEG.L", "DGE.L", "BARC.L", "LLOY.L",
+    "DARK.L",   # Darktrace (cybersecurity) -- verify availability
 
-    # === Europe — Paris (Euronext Paris) ===
+    # Commodity ETCs (LSE) — highly volatile
+    "PHAU.L",   # Physical Gold
+    "PHAG.L",   # Physical Silver
+    "CRUD.L",   # Brent Crude Oil
+    "NGAS.L",   # Natural Gas
+    "COPA.L",   # Copper
+
+    # Leveraged ETFs (LSE) — 3x daily, extreme volatility
+    "3OIS.L",   # 3x Long Crude Oil
+    "3NGL.L",   # 3x Long Natural Gas
+    "3LUS.L",   # 3x Long S&P 500
+    "3USS.L",   # 3x Short S&P 500
+    "3LNQ.L",   # 3x Long NASDAQ 100 (may be delisted, verify)
+    "3DEL.L",   # 3x Long DAX
+
+    # =====================================================================
+    # Europe — Euronext Paris
+    # =====================================================================
     "MC.PA", "OR.PA", "SAN.PA", "AI.PA", "BNP.PA",
     "TTE.PA", "SU.PA", "AIR.PA", "CS.PA", "DG.PA",
 
-    # === Europe — Other (available on DeGiro) ===
-    "NESN.SW",   # Nestle (Swiss)
-    "NOVN.SW",   # Novartis (Swiss)
-    "ROG.SW",    # Roche (Swiss)
-    "NOVO-B.CO", # Novo Nordisk (Copenhagen)
-    "ERIC-B.ST", # Ericsson (Stockholm)
-    "SPOT",      # Spotify (US-listed)
+    # =====================================================================
+    # Europe — Milan (Borsa Italiana)
+    # =====================================================================
+    "UCG.MI",    # UniCredit (volatile bank)
+    "ISP.MI",    # Intesa Sanpaolo
+    "STLAM.MI",  # Stellantis
+    "BAMI.MI",   # Banco BPM
+    "RACE.MI",   # Ferrari
+    "TIT.MI",    # Telecom Italia (penny-range, volatile)
+
+    # =====================================================================
+    # Europe — Madrid (BME)
+    # =====================================================================
+    "SAN.MC",   # Banco Santander
+    "BBVA.MC",  # BBVA
+    "IAG.MC",   # IAG (British Airways parent)
+    "ITX.MC",   # Inditex
+    "CABK.MC",  # CaixaBank
+
+    # =====================================================================
+    # Nordic — Stockholm (Nasdaq Stockholm)
+    # =====================================================================
+    "ERIC-B.ST",  # Ericsson
+    "EVO.ST",     # Evolution AB (gaming, very liquid)
+    "SINCH.ST",   # Sinch (cloud comms)
+    "SSAB-A.ST",  # SSAB (steel, cyclical)
+    "NIBE-B.ST",  # NIBE Industrier (heat pumps)
+    "KINV-B.ST",  # Kinnevik (growth investor)
+
+    # Crypto ETP (Stockholm) -- verify ticker
+    # "BITC.ST",  # CoinShares Physical Bitcoin (delisted or renamed)
+
+    # =====================================================================
+    # Nordic — Copenhagen (Nasdaq Copenhagen)
+    # =====================================================================
+    "NOVO-B.CO",  # Novo Nordisk
+    "GMAB.CO",    # Genmab (biotech)
+    "ORSTED.CO",  # Orsted (green energy, volatile)
+    "DEMANT.CO",  # Demant (medtech)
+    "AMBU-B.CO",  # Ambu (medtech, volatile)
+    "GN.CO",      # GN Store Nord (audio)
+
+    # =====================================================================
+    # Switzerland — SIX Swiss Exchange
+    # =====================================================================
+    "NESN.SW",   # Nestle
+    "NOVN.SW",   # Novartis
+    "ROG.SW",    # Roche
 ]
 
 
 def _infer_currency(symbol: str) -> str:
     """Infer currency from Yahoo Finance ticker suffix."""
-    if symbol.endswith(".AS") or symbol.endswith(".PA"):
-        return "EUR"
-    elif symbol.endswith(".DE"):
-        return "EUR"
-    elif symbol.endswith(".L"):
-        return "GBP"
-    elif symbol.endswith(".SW"):
-        return "CHF"
-    elif symbol.endswith(".CO"):
-        return "DKK"
-    elif symbol.endswith(".ST"):
-        return "SEK"
+    suffix_map = {
+        ".AS": "EUR", ".PA": "EUR", ".DE": "EUR",
+        ".MI": "EUR", ".MC": "EUR",
+        ".L": "GBP",
+        ".SW": "CHF",
+        ".CO": "DKK",
+        ".ST": "SEK",
+    }
+    for suffix, currency in suffix_map.items():
+        if symbol.endswith(suffix):
+            return currency
     return "USD"
 
 
 def _infer_exchange(symbol: str) -> str:
     """Infer exchange name from ticker suffix."""
-    suffixes = {
+    suffix_map = {
         ".AS": "Euronext Amsterdam",
         ".DE": "XETRA",
         ".L": "LSE",
         ".PA": "Euronext Paris",
+        ".MI": "Borsa Italiana",
+        ".MC": "BME Madrid",
         ".SW": "SIX Swiss",
-        ".CO": "Copenhagen",
-        ".ST": "Stockholm",
+        ".CO": "Nasdaq Copenhagen",
+        ".ST": "Nasdaq Stockholm",
     }
-    for suffix, exchange in suffixes.items():
+    for suffix, exchange in suffix_map.items():
         if symbol.endswith(suffix):
             return exchange
     return "US"
@@ -98,9 +170,8 @@ def _infer_exchange(symbol: str) -> str:
 class WeeklyScanner:
     """Scans the market universe and generates ranked trade recommendations.
 
-    The scanner uses Friday's close data to produce Monday-open buy signals.
-    Entry price = next Monday's expected open (estimated from Friday close).
-    Hold for 1 week, sell next Monday open.
+    Uses Friday's close data to produce Monday-open buy signals.
+    Entry = next Monday open. Hold 1 week, sell next Monday open.
     """
 
     def __init__(self, config: AppConfig, market_data: MarketDataProvider | None = None):
@@ -124,24 +195,22 @@ class WeeklyScanner:
                 latest = prices[-1]
                 price = latest.close
 
-                # Basic filters
-                # For non-USD, convert min/max thresholds loosely
-                # (EUR/GBP/CHF are roughly similar order of magnitude to USD)
-                if price < md_cfg.min_price or price > md_cfg.max_price * 5:
+                # Basic filters — relaxed for non-USD
+                currency = _infer_currency(symbol)
+                max_price = md_cfg.max_price * 5 if currency != "USD" else md_cfg.max_price
+                if price < md_cfg.min_price or price > max_price:
                     continue
 
                 avg_vol = sum(p.volume for p in prices[-20:]) / 20
-                # European stocks often have lower volume — adjust threshold
                 min_vol = md_cfg.min_avg_volume
-                currency = _infer_currency(symbol)
                 if currency != "USD":
-                    min_vol = min(min_vol, 100_000)  # Lower bar for EU stocks
+                    min_vol = min(min_vol, 50_000)  # Lower bar for EU/commodity ETCs
                 if avg_vol < min_vol:
                     continue
 
                 indicators = self.market_data.compute_indicators(prices)
 
-                # Weekly change (last 5 trading days)
+                # Weekly change
                 if len(prices) >= 5:
                     week_ago_price = prices[-5].close
                     weekly_change = ((price - week_ago_price) / week_ago_price) * 100
@@ -151,7 +220,7 @@ class WeeklyScanner:
                 # Extra data (API calls — only for US stocks to avoid rate limits)
                 short_interest = None
                 days_to_earnings = None
-                if currency == "USD":
+                if currency == "USD" and not symbol.endswith(("TQQQ", "SOXL", "SPXL", "UPRO", "TNA")):
                     short_interest = self.market_data.get_short_interest(symbol)
                     days_to_earnings = self.market_data.get_upcoming_earnings(symbol)
 
@@ -165,7 +234,7 @@ class WeeklyScanner:
                     symbol=symbol,
                     name=symbol,
                     exchange_id=0,
-                    asset_type=AssetType.STOCK,
+                    asset_type=AssetType.ETF if _is_etf(symbol) else AssetType.STOCK,
                     currency=currency,
                 )
 
@@ -191,8 +260,8 @@ class WeeklyScanner:
     def generate_signals(self, candidates: list[ScannerResult] | None = None) -> list[Signal]:
         """Run all enabled strategies against candidates and return ranked signals.
 
-        Signals are for NEXT Monday open entry, NOT for immediate execution.
-        Strategies that already ran this past week are penalized.
+        Signals are for NEXT Monday open entry.
+        Only extreme weekly moves (>20%) are penalized.
         """
         if candidates is None:
             candidates = self.scan()
@@ -211,8 +280,7 @@ class WeeklyScanner:
                 try:
                     signal = strategy.evaluate(candidate)
                     if signal and signal.confidence >= self.config.strategy.min_confidence:
-                        # Only penalize extreme moves (>20%) that are likely exhausted
-                        # Moderate momentum (5-20%) is actually the signal working correctly
+                        # Only penalize extreme moves that are likely exhausted
                         weekly_move = abs(candidate.weekly_change_pct)
                         if weekly_move > 25:
                             signal.confidence *= 0.5
@@ -221,7 +289,6 @@ class WeeklyScanner:
                             signal.confidence *= 0.7
                             signal.rationale += f" [Note: moved {candidate.weekly_change_pct:+.1f}% this week]"
 
-                        # Re-check confidence after penalty
                         if signal.confidence >= self.config.strategy.min_confidence:
                             all_signals.append(signal)
                 except Exception as e:
@@ -229,13 +296,13 @@ class WeeklyScanner:
                         f"Strategy {strategy.name} failed on {candidate.asset.symbol}: {e}"
                     )
 
-        # Rank by confidence (highest first), then by expected return
+        # Rank by confidence then expected return
         all_signals.sort(
             key=lambda s: (s.confidence, s.expected_return_pct or 0),
             reverse=True,
         )
 
-        # Deduplicate — keep the highest confidence signal per symbol
+        # Deduplicate — best signal per symbol
         seen_symbols: set[str] = set()
         unique_signals: list[Signal] = []
         for signal in all_signals:
@@ -243,7 +310,6 @@ class WeeklyScanner:
                 seen_symbols.add(signal.asset.symbol)
                 unique_signals.append(signal)
 
-        # Limit to max positions
         max_pos = self.config.strategy.max_positions
         top_signals = unique_signals[:max_pos]
 
@@ -253,3 +319,16 @@ class WeeklyScanner:
         )
 
         return top_signals
+
+
+# ETF/ETC/ETP identifiers
+_ETF_SYMBOLS = {
+    "TQQQ", "SOXL", "SPXL", "UPRO", "TNA", "ETHE",
+    "PHAU.L", "PHAG.L", "CRUD.L", "NGAS.L", "COPA.L",
+    "3OIS.L", "3NGL.L", "3LUS.L", "3USS.L", "3LNQ.L", "3DEL.L",
+    "BITC.ST",
+}
+
+
+def _is_etf(symbol: str) -> bool:
+    return symbol in _ETF_SYMBOLS
