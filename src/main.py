@@ -221,6 +221,18 @@ def cmd_backtest(args):
     console.print()
 
 
+def cmd_validate(args):
+    """Run the validation suite."""
+    from src.backtest.validate import run_all
+
+    console.print("\n[bold]Running validation suite...[/bold]\n")
+    ok = run_all()
+    if ok:
+        console.print("\n[bold green]ALL VALIDATIONS PASSED[/bold green]")
+    else:
+        console.print("\n[bold red]VALIDATION FAILURES DETECTED[/bold red]")
+
+
 def main():
     setup_logging()
     print_banner()
@@ -250,6 +262,10 @@ def main():
     bt_parser.add_argument("--weeks", type=int, default=12, help="Number of weeks to backtest")
     bt_parser.add_argument("--capital", type=float, default=1_000, help="Starting capital")
     bt_parser.set_defaults(func=cmd_backtest)
+
+    # validate
+    val_parser = subparsers.add_parser("validate", help="Run validation suite")
+    val_parser.set_defaults(func=cmd_validate)
 
     args = parser.parse_args()
 
