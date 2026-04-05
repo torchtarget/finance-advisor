@@ -68,10 +68,10 @@ DEFAULT_UNIVERSE = [
     "COPA.L",   # Copper
 
     # Leveraged ETFs (LSE) — 3x daily, extreme volatility
-    "3OIS.L",   # 3x Long Crude Oil
+    "3OIL.L",   # 3x Long Crude Oil (NOT 3OIS which is short)
     "3NGL.L",   # 3x Long Natural Gas
     "3LUS.L",   # 3x Long S&P 500
-    "3USS.L",   # 3x Short S&P 500
+    "3USS.L",   # 3x Short S&P 500 (inverse — use for bearish bets)
     "3LNQ.L",   # 3x Long NASDAQ 100 (may be delisted, verify)
     "3DEL.L",   # 3x Long DAX
 
@@ -289,7 +289,12 @@ class WeeklyScanner:
                             signal.confidence *= 0.7
                             signal.rationale += f" [Note: moved {candidate.weekly_change_pct:+.1f}% this week]"
 
-                        if signal.confidence >= self.config.strategy.min_confidence:
+                        # Block mean-reversion on inverse products (oversold = underlying rallied)
+                    if candidate.asset.symbol in _INVERSE_SYMBOLS:
+                        if signal.strategy.value == "mean_reversion_oversold":
+                            continue
+
+                    if signal.confidence >= self.config.strategy.min_confidence:
                             all_signals.append(signal)
                 except Exception as e:
                     logger.debug(
@@ -333,9 +338,12 @@ class WeeklyScanner:
 _ETF_SYMBOLS = {
     "TQQQ", "SOXL", "SPXL", "UPRO", "TNA", "ETHE",
     "PHAU.L", "PHAG.L", "CRUD.L", "NGAS.L", "COPA.L",
-    "3OIS.L", "3NGL.L", "3LUS.L", "3USS.L", "3LNQ.L", "3DEL.L",
-    "BITC.ST",
+    "3OIL.L", "3NGL.L", "3LUS.L", "3USS.L", "3LNQ.L", "3DEL.L",
 }
+
+# Inverse/short products — these go UP when the underlying goes DOWN
+# Mean reversion "oversold" on these is misleading (it means the underlying rallied)
+_INVERSE_SYMBOLS = {"3USS.L"}
 
 
 def _is_etf(symbol: str) -> bool:
