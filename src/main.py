@@ -221,6 +221,92 @@ def cmd_backtest(args):
     console.print()
 
 
+def cmd_sixmonth(args):
+    """Generate 6-month buy-and-hold picks."""
+    from src.strategy.sixmonth.scanner import SixMonthScanner
+
+    capital = args.capital
+    max_picks = args.picks
+
+    console.print(f"\n[bold]6-MONTH BUY & HOLD — ${capital:,.0f} capital, top {max_picks} picks[/bold]")
+    console.print("[bold red]CANNOT sell for 6 months. CAN add on strength.[/bold red]\n")
+
+    scanner = SixMonthScanner()
+    scores = scanner.scan()
+    picks = scanner.generate_picks(capital=capital, max_picks=max_picks, scores=scores)
+
+    if not picks:
+        console.print("[yellow]No picks found.[/yellow]")
+        return
+
+    # Rankings table
+    console.print("[bold]Momentum Rankings (top 15):[/bold]\n")
+    rank_table = Table()
+    rank_table.add_column("#", style="bold")
+    rank_table.add_column("Symbol", style="cyan bold")
+    rank_table.add_column("Score", justify="right")
+    rank_table.add_column("Price", justify="right")
+    rank_table.add_column("6m Return", justify="right")
+    rank_table.add_column("3m Return", justify="right")
+    rank_table.add_column("1m Return", justify="right")
+    rank_table.add_column("Trend", justify="center")
+    rank_table.add_column("Vol Trend", justify="right")
+
+    for i, s in enumerate(scores[:15]):
+        trend = ""
+        if s.above_200_sma:
+            trend += "200"
+        if s.above_50_sma:
+            trend += "+50"
+        if s.making_new_highs:
+            trend += " NEW HI"
+
+        score_style = "green" if s.composite_score >= 60 else "yellow" if s.composite_score >= 40 else "red"
+        ret6_style = "green" if s.return_6m > 0 else "red"
+        ret3_style = "green" if s.return_3m > 0 else "red"
+        ret1_style = "green" if s.return_1m > 0 else "red"
+
+        rank_table.add_row(
+            str(i + 1),
+            s.symbol,
+            f"[{score_style}]{s.composite_score:.0f}[/{score_style}]",
+            f"${s.price_now:.2f}",
+            f"[{ret6_style}]{s.return_6m:+.1f}%[/{ret6_style}]",
+            f"[{ret3_style}]{s.return_3m:+.1f}%[/{ret3_style}]",
+            f"[{ret1_style}]{s.return_1m:+.1f}%[/{ret1_style}]",
+            trend,
+            f"{s.volume_trend:.1f}x",
+        )
+    console.print(rank_table)
+
+    # Picks detail
+    console.print(f"\n[bold]YOUR {max_picks} PICKS — Hold until {picks[0].hold_until}:[/bold]\n")
+
+    per_pick_capital = capital / max_picks
+    for pick in picks:
+        initial_deploy = per_pick_capital * (pick.initial_allocation_pct / (100 / max_picks))
+        reserve = per_pick_capital - initial_deploy
+        qty_now = int(initial_deploy / pick.entry_price)
+        cost_now = qty_now * pick.entry_price
+
+        console.print(Panel(
+            f"[cyan bold]{pick.symbol}[/cyan bold] — {pick.strategy.value}\n\n"
+            f"Price: ${pick.entry_price:.2f}  →  Target: ${pick.target_price:.2f} ([green]{pick.expected_return_pct:+.1f}%[/green])\n"
+            f"Confidence: {pick.confidence:.0%}  |  Score: {pick.momentum_score.composite_score:.0f}/100\n\n"
+            f"[bold]Deploy now:[/bold] {qty_now} shares × ${pick.entry_price:.2f} = ${cost_now:,.2f}\n"
+            f"[bold]Reserve for pyramiding:[/bold] ${reserve:,.2f}\n"
+            f"[bold]Add trigger:[/bold] Buy more if price rises +{pick.add_trigger_pct:.0f}% from entry\n"
+            f"[bold]Hold until:[/bold] {pick.hold_until}\n\n"
+            f"[bold]Rationale:[/bold] {pick.rationale}\n\n"
+            f"[green]Catalysts:[/green] {chr(10).join('  + ' + c for c in pick.catalysts) if pick.catalysts else '  None identified'}\n\n"
+            f"[red]Risks:[/red] {chr(10).join('  - ' + r for r in pick.risks) if pick.risks else '  Total loss accepted'}",
+            title=f"Pick #{picks.index(pick) + 1}",
+            border_style="cyan",
+        ))
+
+    console.print()
+
+
 def cmd_validate(args):
     """Run the validation suite."""
     from src.backtest.validate import run_all
@@ -266,6 +352,12 @@ def main():
     # validate
     val_parser = subparsers.add_parser("validate", help="Run validation suite")
     val_parser.set_defaults(func=cmd_validate)
+
+    # sixmonth
+    sm_parser = subparsers.add_parser("sixmonth", help="6-month buy-and-hold picks")
+    sm_parser.add_argument("--capital", type=float, default=5_000, help="Capital to deploy")
+    sm_parser.add_argument("--picks", type=int, default=3, help="Number of picks")
+    sm_parser.set_defaults(func=cmd_sixmonth)
 
     args = parser.parse_args()
 
